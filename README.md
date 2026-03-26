@@ -17,8 +17,10 @@ A real-time web dashboard for monitoring Thread/Matter mesh networks (like IKEA 
 
 ## Hardware Required
 
-- **Nordic nRF52840 USB Dongle** (VID: 0x1915) — flashed with 802.15.4 sniffer firmware
+- **[Nordic nRF52840 USB Dongle](https://amzn.to/4c75VhU)\*** (VID: 0x1915) — flashed with 802.15.4 sniffer firmware. This is the dongle this project was developed and tested with.
 - A PC to run the dashboard (Windows or Linux)
+
+\* *Amazon affiliate link. If you purchase through this link, it helps support the project at no extra cost to you.*
 
 ## Quick Start
 
