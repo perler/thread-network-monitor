@@ -132,3 +132,36 @@ class DigeraClient:
                 "is_on": attrs.get("isOn"),
             })
         return result
+
+    def toggle_device(self, device_id, on=True):
+        """Toggle a device on or off."""
+        resp = requests.patch(
+            f"{self.base}/v1/devices/{device_id}",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=[{"attributes": {"isOn": on}}],
+            verify=False,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp.status_code == 200
+
+    def blink_device(self, device_id):
+        """Blink a device: get current state, toggle twice with a pause."""
+        import time
+        # Get current state
+        resp = requests.get(
+            f"{self.base}/v1/devices/{device_id}",
+            headers=self._headers(),
+            verify=False,
+            timeout=5,
+        )
+        resp.raise_for_status()
+        dev = resp.json()
+        was_on = dev.get("attributes", {}).get("isOn", False)
+
+        # Toggle off-on-off-on (or on-off-on-off) to create a traffic burst
+        for state in [not was_on, was_on, not was_on, was_on]:
+            self.toggle_device(device_id, on=state)
+            time.sleep(0.4)
+
+        return True

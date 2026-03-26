@@ -574,3 +574,64 @@ class ThreadSniffer:
                 "recent_packets": self.packets[-50:],
                 "pcap_path": self.pcap_path,
             }
+
+    def snapshot_link_counts(self):
+        """Take a snapshot of current link packet counts (from hub)."""
+        with self.lock:
+            counts = {}
+            for (src, dst), link in self.links.items():
+                if src == "0x0000":
+                    counts[dst] = link.packet_count
+                elif dst == "0x0000":
+                    counts[src] = counts.get(src, 0)  # ensure device is tracked
+            # Also snapshot total per device
+            for addr, dev in self.devices.items():
+                counts[addr] = counts.get(addr, 0) + dev.frame_count
+            return counts
+
+    def snapshot_send_counts(self):
+        """Snapshot per-device sent packet counts (frames where device is the source)."""
+        with self.lock:
+            counts = {}
+            for addr, dev in self.devices.items():
+                counts[addr] = dev.frame_count
+            return counts
+
+    def detect_sender_spike(self, baseline, min_delta=2):
+        """Detect which device started sending more packets since baseline."""
+        with self.lock:
+            current = {}
+            for addr, dev in self.devices.items():
+                current[addr] = dev.frame_count
+
+        spikes = []
+        for addr, cur_count in current.items():
+            base_count = baseline.get(addr, 0)
+            delta = cur_count - base_count
+            if delta >= min_delta and addr != "0x0000":  # exclude hub
+                spikes.append((addr, delta))
+
+        spikes.sort(key=lambda x: x[1], reverse=True)
+        return spikes
+
+    def detect_spike(self, baseline, min_delta=3):
+        """Compare current link counts to baseline. Returns list of (addr, delta) sorted by delta."""
+        with self.lock:
+            current = {}
+            for (src, dst), link in self.links.items():
+                if src == "0x0000":
+                    current[dst] = link.packet_count
+                elif dst == "0x0000":
+                    current[src] = current.get(src, 0)
+            for addr, dev in self.devices.items():
+                current[addr] = current.get(addr, 0) + dev.frame_count
+
+        spikes = []
+        for addr, cur_count in current.items():
+            base_count = baseline.get(addr, 0)
+            delta = cur_count - base_count
+            if delta >= min_delta:
+                spikes.append((addr, delta))
+
+        spikes.sort(key=lambda x: x[1], reverse=True)
+        return spikes

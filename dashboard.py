@@ -394,6 +394,20 @@ DASHBOARD_HTML = r"""
     </div>
   </div>
 
+  <!-- Mesh Path Analysis -->
+  <div class="card">
+    <div class="card-header">
+      Mesh Path Analysis
+      <div style="display:flex;gap:6px">
+        <button onclick="refreshMeshAnalysis()" id="meshRefreshBtn" style="font-size:11px;padding:3px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">Refresh</button>
+        <button onclick="startRouteCheck()" id="routeCheckBtn" style="font-size:11px;padding:3px 10px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer">Route Check</button>
+      </div>
+    </div>
+    <div id="meshPanel">
+      <div class="advice"><div class="advice-item info">Collecting traffic data... Mesh analysis needs a few minutes of data to show routing paths.</div></div>
+    </div>
+  </div>
+
   <div class="grid-2">
     <!-- Dirigera Hub -->
     <div class="card">
@@ -879,8 +893,10 @@ async function checkDirigera() {
     const panel = document.getElementById('dirigeraPanel');
     if (d.connected) {
       panel.innerHTML = '<div class="advice-item success">Connected to Dirigera hub at ' + d.hub_ip + '</div>' +
-        '<button onclick="loadDirigeraDevices()" style="margin:8px;padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Load Hub Devices</button>' +
+        '<button onclick="loadDirigeraDevices()" style="margin:8px;padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Reload Hub Devices</button>' +
         '<div id="dirigeraDevices"></div>';
+      // Auto-load devices
+      loadDirigeraDevices();
     } else {
       panel.innerHTML = '<div class="advice-item warning">Not paired with Dirigera hub (' + (d.hub_ip||'?') + ')</div>' +
         '<button onclick="startPairing()" style="margin:8px;padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Start Pairing</button>' +
@@ -940,7 +956,25 @@ async function loadDirigeraDevices() {
       actionHtml = `<span style="font-size:11px;color:var(--excellent)">Assigned to <code>${assignedAddr}</code></span>
         <button onclick="unassignDirigera('${assignedAddr}')" style="margin-left:6px;padding:2px 8px;font-size:10px;background:var(--very-weak);border:none;border-radius:4px;color:white;cursor:pointer">Unassign</button>`;
     } else {
-      actionHtml = `<button onclick="autoLabel('${(dev.name||'').replace(/'/g,'')}','${dev.type||''}','${(dev.room||'').replace(/'/g,'')}')" style="padding:2px 8px;font-size:11px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Assign to address</button>`;
+      const canBlink = dev.type === 'light' || dev.type === 'outlet';
+      const canPress = dev.type === 'shortcutController' || dev.type === 'remote' || dev.type === 'remoteController'
+        || dev.type === 'motionSensor' || dev.type === 'openCloseSensor' || dev.type === 'lightController';
+      const escapedId = dev.id.replace(/'/g, "\\'");
+      const escapedName2 = (dev.name||'').replace(/'/g, "\\'");
+      const escapedType2 = (dev.type||'').replace(/'/g, "\\'");
+      const escapedRoom2 = (dev.room||'').replace(/'/g, "\\'");
+      let identifyBtn = '';
+      if (canBlink) {
+        identifyBtn = `<button onclick="event.stopPropagation();blinkIdentify('${escapedId}','${escapedName2}','${escapedType2}','${escapedRoom2}',this)"
+            id="blink-${dev.id}" style="padding:3px 10px;font-size:11px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer"
+            title="Toggle device on/off to auto-detect its Thread address">Auto-identify</button>`;
+      } else if (canPress) {
+        identifyBtn = `<button onclick="event.stopPropagation();buttonIdentify('${escapedName2}','${escapedType2}','${escapedRoom2}',this)"
+            style="padding:3px 10px;font-size:11px;background:var(--accent);border:none;border-radius:4px;color:white;cursor:pointer"
+            title="Press the button to identify its Thread address">Press to identify</button>`;
+      }
+      const manualBtn = `<button onclick="autoLabel('${(dev.name||'').replace(/'/g,'')}','${dev.type||''}','${(dev.room||'').replace(/'/g,'')}')" style="padding:3px 10px;font-size:11px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Manual assign</button>`;
+      actionHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap">${identifyBtn}${manualBtn}</div>`;
     }
 
     html += `<tr style="${assignedAddr ? 'opacity:0.7;' : ''}">
@@ -1133,6 +1167,274 @@ function confirmAutoLabel(addr, name, type, room) {
   }).then(() => fetchData());
 }
 
+async function blinkIdentify(deviceId, name, type, room, btnEl) {
+  const origText = btnEl.textContent;
+  btnEl.textContent = 'Blinking...';
+  btnEl.disabled = true;
+  btnEl.style.opacity = '0.6';
+
+  try {
+    const resp = await fetch('/api/dirigera/blink-identify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ device_id: deviceId, device_name: name, device_type: type, device_room: room })
+    });
+    const d = await resp.json();
+
+    if (d.ok) {
+      btnEl.textContent = d.matched_address;
+      btnEl.style.background = 'var(--excellent)';
+      btnEl.style.opacity = '1';
+
+      // Show result with confidence info
+      const otherSpikes = d.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
+      const confidence = d.all_spikes.length === 1 ? 'High confidence' :
+        d.all_spikes[0].delta > d.all_spikes[1].delta * 2 ? 'Good confidence' : 'Low confidence — multiple candidates';
+
+      alert(`Identified: "${name}" = ${d.matched_address}\n\n` +
+        `Traffic spike: +${d.delta_packets} packets\n` +
+        `${confidence}\n` +
+        (otherSpikes ? `Other candidates: ${otherSpikes}` : 'No other candidates — clean match!'));
+
+      // Refresh the device list and main table
+      fetchData();
+      loadDirigeraDevices();
+    } else {
+      btnEl.textContent = 'Failed';
+      btnEl.style.background = 'var(--very-weak)';
+      btnEl.style.opacity = '1';
+      alert('Could not identify: ' + d.error);
+      setTimeout(() => {
+        btnEl.textContent = origText;
+        btnEl.style.background = 'var(--accent)';
+        btnEl.disabled = false;
+      }, 2000);
+    }
+  } catch(e) {
+    btnEl.textContent = origText;
+    btnEl.style.background = 'var(--accent)';
+    btnEl.style.opacity = '1';
+    btnEl.disabled = false;
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Button Identification ---
+async function buttonIdentify(name, type, room, btnEl) {
+  const origText = btnEl.textContent;
+
+  // Step 1: capture baseline
+  btnEl.textContent = 'Waiting...';
+  btnEl.disabled = true;
+  btnEl.style.opacity = '0.6';
+
+  try {
+    const startResp = await fetch('/api/button-identify/start', {method: 'POST'});
+    const startData = await startResp.json();
+    if (!startData.ok) { throw new Error(startData.error); }
+
+    // Step 2: ask user to press the button
+    btnEl.textContent = 'Press button NOW!';
+    btnEl.style.background = 'var(--weak)';
+    btnEl.style.opacity = '1';
+    btnEl.style.animation = 'pulse 1s ease-in-out infinite';
+
+    // Wait for user to press (give them 8 seconds)
+    await new Promise(r => setTimeout(r, 8000));
+
+    // Step 3: check for spike
+    btnEl.textContent = 'Checking...';
+    btnEl.style.animation = '';
+    btnEl.style.opacity = '0.6';
+
+    const checkResp = await fetch('/api/button-identify/check', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ device_name: name, device_type: type, device_room: room })
+    });
+    const checkData = await checkResp.json();
+
+    if (checkData.ok) {
+      btnEl.textContent = checkData.matched_address;
+      btnEl.style.background = 'var(--excellent)';
+      btnEl.style.opacity = '1';
+      btnEl.disabled = false;
+
+      const otherSpikes = checkData.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
+      const confidence = checkData.all_spikes.length === 1 ? 'High confidence' :
+        checkData.all_spikes[0].delta > checkData.all_spikes[1].delta * 2 ? 'Good confidence' : 'Low confidence — multiple candidates';
+
+      alert(`Identified: "${name}" = ${checkData.matched_address}\n\n` +
+        `Packets sent: +${checkData.delta_packets}\n` +
+        `${confidence}\n` +
+        (otherSpikes ? `Other candidates: ${otherSpikes}` : 'No other candidates — clean match!'));
+
+      fetchData();
+      loadDirigeraDevices();
+    } else {
+      btnEl.textContent = 'Not detected';
+      btnEl.style.background = 'var(--very-weak)';
+      btnEl.style.opacity = '1';
+      alert('Could not identify: ' + checkData.error + '\n\nTip: Press the button multiple times quickly during the detection window.');
+      setTimeout(() => {
+        btnEl.textContent = origText;
+        btnEl.style.background = 'var(--accent)';
+        btnEl.disabled = false;
+      }, 3000);
+    }
+  } catch(e) {
+    btnEl.textContent = origText;
+    btnEl.style.background = 'var(--accent)';
+    btnEl.style.opacity = '1';
+    btnEl.disabled = false;
+    alert('Error: ' + e.message);
+  }
+}
+
+// --- Mesh Path Analysis ---
+let meshData = null;
+let routeCheckBaseline = null;
+
+async function refreshMeshAnalysis() {
+  const btn = document.getElementById('meshRefreshBtn');
+  btn.textContent = 'Loading...';
+  try {
+    const resp = await fetch('/api/mesh-analysis');
+    meshData = await resp.json();
+    renderMeshPanel();
+  } catch(e) {}
+  btn.textContent = 'Refresh';
+}
+
+function renderMeshPanel() {
+  const panel = document.getElementById('meshPanel');
+  if (!meshData || !meshData.ok || !meshData.devices.length) {
+    panel.innerHTML = '<div class="advice"><div class="advice-item info">No routing data available yet. Let the sniffer collect traffic for a few minutes, then click Refresh.</div></div>';
+    return;
+  }
+
+  let html = '<table><thead><tr>';
+  html += '<th>Device</th><th>Direct to Hub</th><th>Best Relay Path</th><th>Status</th><th>Recommendation</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const d of meshData.devices) {
+    const name = d.name || d.address;
+    const directStr = d.direct_rssi != null
+      ? `<span style="color:${rssiColor(d.direct_rssi)};font-weight:600">${d.direct_rssi} dBm</span> <span class="dim">(${d.direct_packets} pkts)</span>`
+      : '<span class="dim">No direct link</span>';
+
+    let relayStr = '<span class="dim">None found</span>';
+    if (d.best_relay) {
+      const r = d.best_relay;
+      relayStr = `<span style="color:${rssiColor(r.worst_rssi)};font-weight:600">${r.worst_rssi} dBm</span> via <strong>${r.router_name}</strong><br>`;
+      relayStr += `<span class="dim" style="font-size:10px">${d.address}→${r.router}: ${r.leg1_rssi} dBm | ${r.router}→hub: ${r.leg2_rssi} dBm</span>`;
+    }
+
+    let statusBadge, statusColor;
+    switch(d.status) {
+      case 'suboptimal':
+        statusBadge = 'Suboptimal'; statusColor = 'var(--weak)'; break;
+      case 'weak_direct':
+        statusBadge = 'Weak'; statusColor = 'var(--very-weak)'; break;
+      case 'weak_no_relay':
+        statusBadge = 'Weak (no relay)'; statusColor = 'var(--very-weak)'; break;
+      case 'relay_only':
+        statusBadge = 'Relay only'; statusColor = 'var(--fair)'; break;
+      default:
+        statusBadge = 'OK'; statusColor = 'var(--excellent)'; break;
+    }
+
+    const suggestion = d.suggestion
+      ? `<span style="font-size:11px">${d.suggestion}</span>`
+      : '<span class="dim" style="font-size:11px">No action needed</span>';
+
+    html += `<tr>
+      <td><strong>${name}</strong><br><code style="font-size:10px">${d.address}</code></td>
+      <td>${directStr}</td>
+      <td>${relayStr}</td>
+      <td><span style="color:${statusColor};font-weight:600;font-size:12px">${statusBadge}</span></td>
+      <td>${suggestion}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table>';
+  panel.innerHTML = html;
+}
+
+// Route Check: snapshot routes, user power-cycles a device, then compare
+async function startRouteCheck() {
+  const btn = document.getElementById('routeCheckBtn');
+  if (routeCheckBaseline) {
+    // Second click: compare
+    btn.textContent = 'Checking...';
+    btn.disabled = true;
+    await refreshMeshAnalysis();
+
+    const resp = await fetch('/api/mesh-analysis');
+    const after = await resp.json();
+
+    let changes = [];
+    if (routeCheckBaseline.devices && after.ok) {
+      for (const afterDev of after.devices) {
+        const beforeDev = routeCheckBaseline.devices.find(d => d.address === afterDev.address);
+        if (!beforeDev) continue;
+
+        const beforeDirect = beforeDev.direct_rssi;
+        const afterDirect = afterDev.direct_rssi;
+        const beforeRelay = beforeDev.best_relay;
+        const afterRelay = afterDev.best_relay;
+
+        // Check if routing changed
+        if (beforeDirect && !afterDirect && afterRelay) {
+          changes.push({addr: afterDev.address, name: afterDev.name, type: 'switched_to_relay',
+            text: `<strong>${afterDev.name || afterDev.address}</strong> switched from direct (${beforeDirect} dBm) to relay via ${afterRelay.router_name}`});
+        } else if (!beforeDirect && afterDirect) {
+          changes.push({addr: afterDev.address, name: afterDev.name, type: 'switched_to_direct',
+            text: `<strong>${afterDev.name || afterDev.address}</strong> switched from relay to direct (${afterDirect} dBm)`});
+        } else if (beforeDirect && afterDirect && Math.abs(beforeDirect - afterDirect) > 5) {
+          changes.push({addr: afterDev.address, name: afterDev.name, type: 'rssi_change',
+            text: `<strong>${afterDev.name || afterDev.address}</strong> signal changed: ${beforeDirect} → ${afterDirect} dBm`});
+        } else if (beforeRelay && afterRelay && beforeRelay.router !== afterRelay.router) {
+          changes.push({addr: afterDev.address, name: afterDev.name, type: 'relay_change',
+            text: `<strong>${afterDev.name || afterDev.address}</strong> changed relay: ${beforeRelay.router_name} → ${afterRelay.router_name}`});
+        }
+      }
+    }
+
+    // Show results
+    let html = '<div class="advice" style="margin-top:8px">';
+    if (changes.length > 0) {
+      html += '<div class="advice-item success" style="margin-bottom:4px"><strong>Route changes detected:</strong></div>';
+      for (const c of changes) {
+        html += `<div class="advice-item info">${c.text}</div>`;
+      }
+    } else {
+      html += '<div class="advice-item warning">No route changes detected. The device may need more time, or Thread chose the same path again.</div>';
+    }
+    html += '</div>';
+
+    const panel = document.getElementById('meshPanel');
+    panel.innerHTML += html;
+
+    routeCheckBaseline = null;
+    btn.textContent = 'Route Check';
+    btn.disabled = false;
+    btn.style.background = 'var(--accent)';
+  } else {
+    // First click: take baseline
+    const resp = await fetch('/api/mesh-analysis');
+    routeCheckBaseline = await resp.json();
+    btn.textContent = 'Power-cycle device, then click here';
+    btn.style.background = 'var(--weak)';
+    document.getElementById('meshPanel').innerHTML += '<div class="advice"><div class="advice-item warning" style="margin-top:8px">Baseline captured. Now power-cycle the device you want to check, wait for it to rejoin (~30s), then click the button again.</div></div>';
+  }
+}
+
+// Auto-refresh mesh every 30 seconds
+setInterval(() => { if (!routeCheckBaseline) refreshMeshAnalysis(); }, 30000);
+// Initial load after 10s of data collection
+setTimeout(refreshMeshAnalysis, 10000);
+
 function showHelp() {
   document.getElementById('helpModal').style.display = 'flex';
 }
@@ -1265,6 +1567,241 @@ def api_dirigera_devices():
     try:
         devices = dirigera.get_device_summary()
         return jsonify({"ok": True, "devices": devices})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/mesh-analysis")
+def api_mesh_analysis():
+    """Analyze mesh routing paths for all devices."""
+    snap = sniffer.get_snapshot()
+    labels = load_labels()
+
+    # Build link map: (src, dst) -> {rssi, packets}
+    link_map = {}
+    for l in snap["links"]:
+        link_map[(l["src"], l["dst"])] = {"rssi": l["avg_rssi"], "packets": l["packet_count"], "lqi": l["avg_lqi"]}
+
+    # Find all routers (devices that relay traffic — have links both to hub and to other devices)
+    hub = "0x0000"
+    routers = set()
+    for l in snap["links"]:
+        if l["src"] != hub and l["dst"] != hub:
+            # This device talks to something other than the hub — might be routing
+            routers.add(l["src"])
+            routers.add(l["dst"])
+    # Also add labeled repeaters
+    for addr, lbl in labels.items():
+        if lbl.get("type") == "repeater":
+            routers.add(addr)
+
+    devices_analysis = []
+    for dev in snap["devices"]:
+        addr = dev["short_address"] or dev["address"]
+        if addr == hub:
+            continue
+
+        lbl = labels.get(addr, {})
+        name = lbl.get("name", "") or dev.get("label", "")
+
+        # Direct link to hub
+        direct_to_hub = link_map.get((addr, hub))
+        direct_from_hub = link_map.get((hub, addr))
+
+        # Find best relay path: device -> router -> hub
+        best_relay = None
+        for router in routers:
+            if router == addr or router == hub:
+                continue
+            # Check if this device talks to the router
+            dev_to_router = link_map.get((addr, router))
+            router_to_hub = link_map.get((router, hub))
+            # Or router talks to device
+            router_to_dev = link_map.get((router, addr))
+            hub_to_router = link_map.get((hub, router))
+
+            leg1 = dev_to_router or router_to_dev
+            leg2 = router_to_hub or hub_to_router
+
+            if leg1 and leg2:
+                # Relay path quality = worst of the two legs
+                worst_rssi = min(leg1["rssi"], leg2["rssi"])
+                router_lbl = labels.get(router, {})
+                router_label = router_lbl.get("name", "") or router
+                router_type = router_lbl.get("type", "")
+                if router_type:
+                    router_label = f"{router_label} ({router_type})"
+                relay = {
+                    "router": router,
+                    "router_name": router_label,
+                    "leg1_rssi": leg1["rssi"],
+                    "leg2_rssi": leg2["rssi"],
+                    "worst_rssi": worst_rssi,
+                    "leg1_packets": leg1["packets"],
+                    "leg2_packets": leg2["packets"],
+                }
+                if not best_relay or worst_rssi > best_relay["worst_rssi"]:
+                    best_relay = relay
+
+        # Determine routing status
+        direct_rssi = direct_to_hub["rssi"] if direct_to_hub else None
+        relay_rssi = best_relay["worst_rssi"] if best_relay else None
+
+        if direct_rssi is not None and relay_rssi is not None:
+            if relay_rssi > direct_rssi + 5:
+                status = "suboptimal"
+                suggestion = f"Could improve by routing through {best_relay['router_name']} ({relay_rssi:.0f} dBm vs {direct_rssi:.0f} dBm direct)"
+            elif direct_rssi < -80:
+                status = "weak_direct"
+                suggestion = f"Weak direct link ({direct_rssi:.0f} dBm). Relay via {best_relay['router_name']} would give {relay_rssi:.0f} dBm"
+            else:
+                status = "ok"
+                suggestion = ""
+        elif direct_rssi is not None and direct_rssi < -80:
+            status = "weak_no_relay"
+            suggestion = "Weak signal and no relay path found. Consider adding a repeater."
+        elif direct_rssi is None and relay_rssi is not None:
+            status = "relay_only"
+            suggestion = f"No direct hub link observed. Routing through {best_relay['router_name']}"
+        else:
+            status = "ok"
+            suggestion = ""
+
+        dev_type = lbl.get("type", "")
+        display_name = f"{name} ({dev_type})" if name and dev_type else name
+
+        devices_analysis.append({
+            "address": addr,
+            "name": display_name,
+            "direct_rssi": direct_rssi,
+            "direct_packets": direct_to_hub["packets"] if direct_to_hub else 0,
+            "best_relay": best_relay,
+            "status": status,
+            "suggestion": suggestion,
+            "signal_quality": dev["signal_quality"],
+        })
+
+    # Sort: problems first
+    status_order = {"suboptimal": 0, "weak_direct": 0, "weak_no_relay": 1, "relay_only": 2, "ok": 3}
+    devices_analysis.sort(key=lambda x: (status_order.get(x["status"], 3), x["direct_rssi"] or -100))
+
+    return jsonify({
+        "ok": True,
+        "devices": devices_analysis,
+        "routers": list(routers),
+    })
+
+
+@app.route("/api/button-identify/start", methods=["POST"])
+def api_button_identify_start():
+    """Start button identification — take a baseline of sender counts."""
+    baseline = sniffer.snapshot_send_counts()
+    # Store in a simple global
+    app.config["_button_baseline"] = baseline
+    return jsonify({"ok": True, "message": "Baseline captured. Press the button now."})
+
+
+@app.route("/api/button-identify/check", methods=["POST"])
+def api_button_identify_check():
+    """Check which device sent new packets since baseline."""
+    data = request.get_json()
+    device_name = data.get("device_name", "")
+    device_type = data.get("device_type", "")
+    device_room = data.get("device_room", "")
+
+    baseline = app.config.get("_button_baseline")
+    if not baseline:
+        return jsonify({"ok": False, "error": "No baseline. Click 'Identify' first."}), 400
+
+    spikes = sniffer.detect_sender_spike(baseline, min_delta=2)
+
+    if spikes:
+        best_addr, best_delta = spikes[0]
+
+        # Auto-assign if name provided
+        if device_name:
+            labels = load_labels()
+            labels[best_addr] = {
+                "name": device_name,
+                "type": device_type,
+                "room": device_room,
+            }
+            save_labels(labels)
+
+        return jsonify({
+            "ok": True,
+            "matched_address": best_addr,
+            "delta_packets": best_delta,
+            "all_spikes": [{"address": a, "delta": d} for a, d in spikes[:5]],
+            "message": f"Identified! '{device_name}' = {best_addr} ({best_delta} packets sent)",
+        })
+    else:
+        return jsonify({
+            "ok": False,
+            "error": "No new sender detected. Press the button again and try 'Check' once more.",
+            "all_spikes": [],
+        })
+
+
+@app.route("/api/dirigera/blink-identify", methods=["POST"])
+def api_blink_identify():
+    """Blink a device and detect which Thread address responds."""
+    if not dirigera or not dirigera.is_authenticated():
+        return jsonify({"ok": False, "error": "Not paired with hub"}), 401
+
+    data = request.get_json()
+    device_id = data.get("device_id", "")
+    device_name = data.get("device_name", "")
+    device_type = data.get("device_type", "")
+    device_room = data.get("device_room", "")
+
+    if not device_id:
+        return jsonify({"ok": False, "error": "No device_id provided"}), 400
+
+    import time as _time
+
+    try:
+        # Take baseline snapshot
+        baseline = sniffer.snapshot_link_counts()
+
+        # Wait a moment for baseline to settle
+        _time.sleep(0.5)
+        baseline = sniffer.snapshot_link_counts()
+
+        # Blink the device (toggles on/off/on/off)
+        dirigera.blink_device(device_id)
+
+        # Wait for traffic to arrive at sniffer
+        _time.sleep(1.5)
+
+        # Detect which address spiked
+        spikes = sniffer.detect_spike(baseline, min_delta=3)
+
+        if spikes:
+            best_addr, best_delta = spikes[0]
+            # Auto-assign label
+            labels = load_labels()
+            labels[best_addr] = {
+                "name": device_name,
+                "type": device_type,
+                "room": device_room,
+            }
+            save_labels(labels)
+
+            return jsonify({
+                "ok": True,
+                "matched_address": best_addr,
+                "delta_packets": best_delta,
+                "all_spikes": [{"address": a, "delta": d} for a, d in spikes[:5]],
+                "message": f"Identified! '{device_name}' = {best_addr} ({best_delta} extra packets detected)",
+            })
+        else:
+            return jsonify({
+                "ok": False,
+                "error": "No traffic spike detected. The device may not be reachable or the blink didn't generate enough traffic.",
+                "all_spikes": [],
+            })
+
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
