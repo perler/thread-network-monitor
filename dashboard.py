@@ -576,7 +576,10 @@ function renderDevices(devices) {
     const mfr = d.manufacturer || '<span class="dim">—</span>';
     const role = d.role || '—';
     const label = d.label ? `<strong>${d.label}</strong>` : '<span class="dim" style="cursor:pointer" title="Click to label">click to label</span>';
-    const labelInfo = d.label_room ? ` <span class="dim" style="font-size:11px">(${d.label_room})</span>` : '';
+    const labelTypeStr = d.label_type ? d.label_type : '';
+    const labelRoomStr = d.label_room ? d.label_room : '';
+    const labelExtra = [labelTypeStr, labelRoomStr].filter(Boolean).join(', ');
+    const labelInfo = labelExtra ? ` <span class="dim" style="font-size:11px">(${labelExtra})</span>` : '';
     const escapedName = (d.label||'').replace(/'/g, "\\'");
     const escapedType = (d.label_type||'').replace(/'/g, "\\'");
     const escapedRoom = (d.label_room||'').replace(/'/g, "\\'");
@@ -1169,7 +1172,7 @@ function confirmAutoLabel(addr, name, type, room) {
 
 async function blinkIdentify(deviceId, name, type, room, btnEl) {
   const origText = btnEl.textContent;
-  btnEl.textContent = 'Blinking...';
+  btnEl.textContent = type === 'blinds' ? 'Moving...' : 'Blinking...';
   btnEl.disabled = true;
   btnEl.style.opacity = '0.6';
 
@@ -1188,12 +1191,11 @@ async function blinkIdentify(deviceId, name, type, room, btnEl) {
 
       // Show result with confidence info
       const otherSpikes = d.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
-      const confidence = d.all_spikes.length === 1 ? 'High confidence' :
-        d.all_spikes[0].delta > d.all_spikes[1].delta * 2 ? 'Good confidence' : 'Low confidence — multiple candidates';
+      const confLabel = {high: 'High confidence', good: 'Good confidence', low: 'Low confidence — multiple candidates'}[d.confidence || 'high'] || 'High confidence';
 
       alert(`Identified: "${name}" = ${d.matched_address}\n\n` +
         `Traffic spike: +${d.delta_packets} packets\n` +
-        `${confidence}\n` +
+        `${confLabel}\n` +
         (otherSpikes ? `Other candidates: ${otherSpikes}` : 'No other candidates — clean match!'));
 
       // Refresh the device list and main table
@@ -1261,12 +1263,11 @@ async function buttonIdentify(name, type, room, btnEl) {
       btnEl.disabled = false;
 
       const otherSpikes = checkData.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
-      const confidence = checkData.all_spikes.length === 1 ? 'High confidence' :
-        checkData.all_spikes[0].delta > checkData.all_spikes[1].delta * 2 ? 'Good confidence' : 'Low confidence — multiple candidates';
+      const confLabel2 = {high: 'High confidence', good: 'Good confidence', low: 'Low confidence — multiple candidates'}[checkData.confidence || 'high'] || 'High confidence';
 
       alert(`Identified: "${name}" = ${checkData.matched_address}\n\n` +
         `Packets sent: +${checkData.delta_packets}\n` +
-        `${confidence}\n` +
+        `${confLabel2}\n` +
         (otherSpikes ? `Other candidates: ${otherSpikes}` : 'No other candidates — clean match!'));
 
       fetchData();
@@ -1713,14 +1714,28 @@ def api_button_identify_check():
     if not baseline:
         return jsonify({"ok": False, "error": "No baseline. Click 'Identify' first."}), 400
 
-    spikes = sniffer.detect_sender_spike(baseline, min_delta=2)
+    all_spikes = sniffer.detect_sender_spike(baseline, min_delta=2)
 
-    if spikes:
-        best_addr, best_delta = spikes[0]
+    # Filter out hub and already-labeled devices
+    labels = load_labels()
+    labeled_addrs = {addr for addr, lbl in labels.items() if lbl.get("name")}
+    filtered = [(a, d) for a, d in all_spikes if a != "0x0000" and a not in labeled_addrs]
+
+    if filtered:
+        best_addr, best_delta = filtered[0]
+
+        # Confidence
+        if len(filtered) == 1:
+            confidence = "high"
+        elif best_delta >= filtered[1][1] * 1.5:
+            confidence = "high"
+        elif best_delta >= filtered[1][1] * 1.2:
+            confidence = "good"
+        else:
+            confidence = "low"
 
         # Auto-assign if name provided
         if device_name:
-            labels = load_labels()
             labels[best_addr] = {
                 "name": device_name,
                 "type": device_type,
@@ -1732,7 +1747,8 @@ def api_button_identify_check():
             "ok": True,
             "matched_address": best_addr,
             "delta_packets": best_delta,
-            "all_spikes": [{"address": a, "delta": d} for a, d in spikes[:5]],
+            "confidence": confidence,
+            "all_spikes": [{"address": a, "delta": d} for a, d in filtered[:5]],
             "message": f"Identified! '{device_name}' = {best_addr} ({best_delta} packets sent)",
         })
     else:
@@ -1775,12 +1791,27 @@ def api_blink_identify():
         _time.sleep(1.5)
 
         # Detect which address spiked
-        spikes = sniffer.detect_spike(baseline, min_delta=3)
+        all_spikes = sniffer.detect_spike(baseline, min_delta=3)
 
-        if spikes:
-            best_addr, best_delta = spikes[0]
+        # Filter out hub and already-labeled devices from candidates
+        labels = load_labels()
+        labeled_addrs = {addr for addr, lbl in labels.items() if lbl.get("name")}
+        filtered = [(a, d) for a, d in all_spikes if a != "0x0000" and a not in labeled_addrs]
+
+        if filtered:
+            best_addr, best_delta = filtered[0]
+
+            # Confidence: compare top candidate to next non-hub, non-labeled candidate
+            if len(filtered) == 1:
+                confidence = "high"
+            elif best_delta >= filtered[1][1] * 1.5:
+                confidence = "high"
+            elif best_delta >= filtered[1][1] * 1.2:
+                confidence = "good"
+            else:
+                confidence = "low"
+
             # Auto-assign label
-            labels = load_labels()
             labels[best_addr] = {
                 "name": device_name,
                 "type": device_type,
@@ -1792,7 +1823,8 @@ def api_blink_identify():
                 "ok": True,
                 "matched_address": best_addr,
                 "delta_packets": best_delta,
-                "all_spikes": [{"address": a, "delta": d} for a, d in spikes[:5]],
+                "confidence": confidence,
+                "all_spikes": [{"address": a, "delta": d} for a, d in filtered[:5]],
                 "message": f"Identified! '{device_name}' = {best_addr} ({best_delta} extra packets detected)",
             })
         else:
