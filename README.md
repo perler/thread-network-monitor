@@ -2,6 +2,10 @@
 
 A real-time web dashboard for monitoring Thread/Matter mesh networks (like IKEA Dirigera) using an nRF52840 USB sniffer dongle. Visualizes signal strength, link quality, and device relationships to help optimize device placement.
 
+## Screenshot
+
+![Thread Network Monitor Dashboard](screenshots/dashboard.png)
+
 ## Features
 
 - **Live signal monitoring** — RSSI and LQI per device, color-coded signal quality
