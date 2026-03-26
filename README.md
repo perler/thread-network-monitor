@@ -4,7 +4,7 @@ A real-time web dashboard for monitoring Thread/Matter mesh networks (like IKEA 
 
 ## Screenshot
 
-![Thread Network Monitor Dashboard](screenshots/dashboard.png)
+![Thread Network Monitor Dashboard](screenshots/dashboard.gif)
 
 ## Features
 
