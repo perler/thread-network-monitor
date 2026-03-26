@@ -1,0 +1,19 @@
+# Credentials and tokens
+dirigera_token.json
+
+# Device labels (user-specific)
+device_labels.json
+
+# Capture files
+*.pcap
+
+# nRF Sniffer firmware (downloaded separately)
+nrf-sniffer/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
