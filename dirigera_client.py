@@ -146,7 +146,7 @@ class DigeraClient:
         return resp.status_code == 200
 
     def blink_device(self, device_id):
-        """Blink a device: get current state, toggle twice with a pause."""
+        """Blink a device to create a traffic burst for identification."""
         import time
         # Get current state
         resp = requests.get(
@@ -157,11 +157,32 @@ class DigeraClient:
         )
         resp.raise_for_status()
         dev = resp.json()
-        was_on = dev.get("attributes", {}).get("isOn", False)
+        attrs = dev.get("attributes", {})
+        dev_type = dev.get("deviceType", dev.get("type", ""))
 
-        # Toggle off-on-off-on (or on-off-on-off) to create a traffic burst
-        for state in [not was_on, was_on, not was_on, was_on]:
-            self.toggle_device(device_id, on=state)
-            time.sleep(0.4)
+        if "blindsTargetLevel" in attrs:
+            # Blinds: nudge level slightly then back
+            current_level = attrs.get("blindsTargetLevel", 0)
+            nudge = min(current_level + 5, 100) if current_level < 95 else max(current_level - 5, 0)
+            for level in [nudge, current_level, nudge, current_level]:
+                self._set_attribute(device_id, "blindsTargetLevel", level)
+                time.sleep(0.5)
+        else:
+            # Lights/outlets: toggle on/off
+            was_on = attrs.get("isOn", False)
+            for state in [not was_on, was_on, not was_on, was_on]:
+                self.toggle_device(device_id, on=state)
+                time.sleep(0.4)
 
         return True
+
+    def _set_attribute(self, device_id, attr, value):
+        """Set a single attribute on a device."""
+        resp = requests.patch(
+            f"{self.base}/v1/devices/{device_id}",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json=[{"attributes": {attr: value}}],
+            verify=False,
+            timeout=5,
+        )
+        resp.raise_for_status()

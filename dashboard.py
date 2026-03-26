@@ -956,7 +956,7 @@ async function loadDirigeraDevices() {
       actionHtml = `<span style="font-size:11px;color:var(--excellent)">Assigned to <code>${assignedAddr}</code></span>
         <button onclick="unassignDirigera('${assignedAddr}')" style="margin-left:6px;padding:2px 8px;font-size:10px;background:var(--very-weak);border:none;border-radius:4px;color:white;cursor:pointer">Unassign</button>`;
     } else {
-      const canBlink = dev.type === 'light' || dev.type === 'outlet';
+      const canBlink = dev.type === 'light' || dev.type === 'outlet' || dev.type === 'blinds';
       const canPress = dev.type === 'shortcutController' || dev.type === 'remote' || dev.type === 'remoteController'
         || dev.type === 'motionSensor' || dev.type === 'openCloseSensor' || dev.type === 'lightController';
       const escapedId = dev.id.replace(/'/g, "\\'");
