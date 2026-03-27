@@ -108,6 +108,19 @@ Thread devices appear as hex addresses (e.g. `0x2B5C`). Three ways to identify t
 
 The nRF Sniffer extcap plugin can be installed into Wireshark for deep packet analysis. Copy `nrf802154_sniffer.py` and `nrf802154_sniffer.bat` to Wireshark's extcap directory. The dashboard also saves `.pcap` files automatically.
 
+## Auto-Identification Limitations
+
+The "Auto-identify" and "Identify All" features work by blinking/toggling a device via the Dirigera hub and detecting which Thread address produces a traffic spike. This works well for most devices but has known limitations:
+
+- **Nearby devices bleed traffic.** Thread is a mesh — when one device is toggled, its neighbors relay packets. Devices physically close together (e.g. 3 lights on one table) produce overlapping spikes, leading to misidentification.
+- **Distant devices may not spike at all.** Devices far from the sniffer dongle communicate through routers. The sniffer may never see their direct radio transmissions — only the routers' relayed traffic.
+- **Batch identification compounds errors.** "Identify All" assigns labels sequentially. If device A is mislabeled as address X, then device B (which is actually X) can never be matched, since X is filtered as "already assigned."
+- **Blinds are especially tricky.** Their traffic patterns (small nudge commands) produce weaker spikes than lights toggling on/off.
+
+**Recommendation:** After running "Identify All", verify the results by manually blinking individual devices and checking if the assigned address is the dominant spike. If a device can't be identified, check whether its address was already claimed by a mislabeled device.
+
+For complex setups, give a local [Claude Code](https://claude.ai/code) instance access to the dashboard API — it can run systematic blink-and-compare tests across all devices to detect and resolve mislabeled addresses. See `AGENTS.md` for details.
+
 ## License
 
 MIT

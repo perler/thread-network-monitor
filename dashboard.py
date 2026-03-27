@@ -9,6 +9,7 @@ import json
 import time
 import signal
 import argparse
+import threading
 from datetime import datetime
 
 from flask import Flask, jsonify, render_template_string, request
@@ -527,6 +528,16 @@ function setSort(col) {
   if (data) renderDevices(data.devices);
 }
 
+function showToast(msg, isError) {
+  const toast = document.createElement('div');
+  toast.textContent = msg;
+  toast.style.cssText = 'position:fixed;bottom:24px;right:24px;padding:10px 20px;border-radius:6px;color:white;font-size:13px;z-index:10000;opacity:0;transition:opacity 0.3s;max-width:400px;' +
+    (isError ? 'background:var(--very-weak)' : 'background:var(--excellent)');
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.style.opacity = '1');
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
 function formatUptime(s) {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -718,7 +729,17 @@ async function fetchData() {
     document.getElementById('statDevices').textContent = data.device_count;
     document.getElementById('statPackets').textContent = data.total_packets.toLocaleString();
     document.getElementById('statUptime').textContent = formatUptime(data.uptime_seconds);
-    document.getElementById('statusDot').style.background = 'var(--excellent)';
+
+    const dot = document.getElementById('statusDot');
+    if (data.connected) {
+      dot.style.background = 'var(--excellent)';
+      dot.style.animation = 'pulse 2s ease-in-out infinite';
+      dot.title = 'Dongle connected';
+    } else {
+      dot.style.background = 'var(--weak)';
+      dot.style.animation = 'pulse 0.8s ease-in-out infinite';
+      dot.title = 'Dongle disconnected \u2014 waiting for reconnect...';
+    }
 
     renderDevices(data.devices);
     renderLinks(data.links);
@@ -896,7 +917,7 @@ async function checkDirigera() {
     const panel = document.getElementById('dirigeraPanel');
     if (d.connected) {
       panel.innerHTML = '<div class="advice-item success">Connected to Dirigera hub at ' + d.hub_ip + '</div>' +
-        '<button onclick="loadDirigeraDevices()" style="margin:8px;padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Reload Hub Devices</button>' +
+        '<div style="margin-bottom:8px"><button onclick="loadDirigeraDevices()" style="padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Reload Hub Devices</button></div>' +
         '<div id="dirigeraDevices"></div>';
       // Auto-load devices
       loadDirigeraDevices();
@@ -949,15 +970,27 @@ async function loadDirigeraDevices() {
     if (lbl.name) nameToAddr[lbl.name] = addr;
   }
 
-  let html = '<table style="margin-top:8px"><thead><tr><th>Name</th><th>Type</th><th>Room</th><th>Model</th><th>Reachable</th><th>Action</th></tr></thead><tbody>';
+  // Count unassigned blinkable devices
+  const blinkableTypes = new Set(['light', 'outlet', 'blinds']);
+  const assignedNames = new Set(Object.values(labels).map(l => l.name).filter(Boolean));
+  const unassignedBlinkable = d.devices.filter(dev => blinkableTypes.has(dev.type) && !assignedNames.has(dev.name) && dev.reachable);
+
+  let identifyAllBtn = '';
+  if (unassignedBlinkable.length > 0) {
+    identifyAllBtn = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <button id="identifyAllBtn" onclick="identifyAll()" style="padding:6px 14px;font-size:13px;background:var(--accent);border:none;border-radius:6px;color:white;cursor:pointer;white-space:nowrap">Identify All (${unassignedBlinkable.length} devices)</button>
+      <span id="identifyAllStatus" style="font-size:12px;color:var(--text-dim)"></span></div>`;
+  }
+
+  let html = identifyAllBtn + '<table><thead><tr><th>Name</th><th>Type</th><th>Room</th><th>Model</th><th>Reachable</th><th>Action</th></tr></thead><tbody>';
   for (const dev of d.devices) {
     const reachable = dev.reachable ? '<span style="color:var(--excellent)">Yes</span>' : '<span style="color:var(--very-weak)">No</span>';
     const assignedAddr = nameToAddr[dev.name];
 
     let actionHtml;
     if (assignedAddr) {
-      actionHtml = `<span style="font-size:11px;color:var(--excellent)">Assigned to <code>${assignedAddr}</code></span>
-        <button onclick="unassignDirigera('${assignedAddr}')" style="margin-left:6px;padding:2px 8px;font-size:10px;background:var(--very-weak);border:none;border-radius:4px;color:white;cursor:pointer">Unassign</button>`;
+      actionHtml = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:11px;color:var(--excellent)">Assigned to <code>${assignedAddr}</code></span>
+        <button onclick="unassignDirigera('${assignedAddr}')" style="padding:2px 8px;font-size:10px;background:var(--very-weak);border:none;border-radius:4px;color:white;cursor:pointer">Unassign</button></div>`;
     } else {
       const canBlink = dev.type === 'light' || dev.type === 'outlet' || dev.type === 'blinds';
       const canPress = dev.type === 'shortcutController' || dev.type === 'remote' || dev.type === 'remoteController'
@@ -977,7 +1010,7 @@ async function loadDirigeraDevices() {
             title="Press the button to identify its Thread address">Press to identify</button>`;
       }
       const manualBtn = `<button onclick="autoLabel('${(dev.name||'').replace(/'/g,'')}','${dev.type||''}','${(dev.room||'').replace(/'/g,'')}')" style="padding:3px 10px;font-size:11px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Manual assign</button>`;
-      actionHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap">${identifyBtn}${manualBtn}</div>`;
+      actionHtml = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${identifyBtn}${manualBtn}</div>`;
     }
 
     html += `<tr style="${assignedAddr ? 'opacity:0.7;' : ''}">
@@ -1189,23 +1222,48 @@ async function blinkIdentify(deviceId, name, type, room, btnEl) {
       btnEl.style.background = 'var(--excellent)';
       btnEl.style.opacity = '1';
 
-      // Show result with confidence info
-      const otherSpikes = d.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
       const confLabel = {high: 'High confidence', good: 'Good confidence', low: 'Low confidence — multiple candidates'}[d.confidence || 'high'] || 'High confidence';
 
-      alert(`Identified: "${name}" = ${d.matched_address}\n\n` +
-        `Traffic spike: +${d.delta_packets} packets\n` +
-        `${confLabel}\n` +
-        (otherSpikes ? `Other candidates: ${otherSpikes}` : 'No other candidates — clean match!'));
+      if (d.confidence === 'low') {
+        // Low confidence — ask user to confirm
+        const otherSpikes = d.all_spikes.slice(1).map(s => `${s.address} (+${s.delta})`).join(', ');
+        alert(`Low confidence match: "${name}" = ${d.matched_address}\n\n` +
+          `Traffic spike: +${d.delta_packets} packets\n` +
+          (otherSpikes ? `Other candidates: ${otherSpikes}` : ''));
+      } else {
+        // High/good confidence — auto-dismiss with toast
+        showToast(`${name} → ${d.matched_address} (${confLabel})`);
+      }
 
-      // Refresh the device list and main table
       fetchData();
       loadDirigeraDevices();
+    } else if (d.suggestion) {
+      // Last-device fallback — weak spike, ask user to confirm
+      btnEl.textContent = d.matched_address + '?';
+      btnEl.style.background = 'var(--fair)';
+      btnEl.style.opacity = '1';
+      const accept = confirm(
+        `Weak match: "${d.device_name}" might be ${d.matched_address} (+${d.delta_packets} packets)\n\n` +
+        `This is the last unassigned device. Accept this assignment?`);
+      if (accept) {
+        fetch('/api/label', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({address: d.matched_address, name: d.device_name, type: d.device_type, room: d.device_room})
+        }).then(() => { fetchData(); loadDirigeraDevices(); });
+        btnEl.textContent = d.matched_address;
+        btnEl.style.background = 'var(--excellent)';
+        showToast(`${d.device_name} → ${d.matched_address} (manual confirm)`);
+      } else {
+        btnEl.textContent = origText;
+        btnEl.style.background = 'var(--accent)';
+        btnEl.disabled = false;
+      }
     } else {
       btnEl.textContent = 'Failed';
       btnEl.style.background = 'var(--very-weak)';
       btnEl.style.opacity = '1';
-      alert('Could not identify: ' + d.error);
+      showToast('Could not identify: ' + d.error, true);
       setTimeout(() => {
         btnEl.textContent = origText;
         btnEl.style.background = 'var(--accent)';
@@ -1219,6 +1277,74 @@ async function blinkIdentify(deviceId, name, type, room, btnEl) {
     btnEl.disabled = false;
     alert('Error: ' + e.message);
   }
+}
+
+// --- Identify All ---
+let identifyAllPoller = null;
+async function identifyAll() {
+  const btn = document.getElementById('identifyAllBtn');
+  const status = document.getElementById('identifyAllStatus');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  btn.style.opacity = '0.6';
+
+  try {
+    const resp = await fetch('/api/dirigera/identify-all/start', {method:'POST'});
+    const d = await resp.json();
+    if (!d.ok) { throw new Error(d.error || 'Failed to start'); }
+    if (d.total === 0) { status.textContent = d.message; btn.style.display='none'; return; }
+
+    btn.textContent = 'Stop';
+    btn.style.background = 'var(--very-weak)';
+    btn.style.opacity = '1';
+    btn.disabled = false;
+    btn.onclick = stopIdentifyAll;
+
+    identifyAllPoller = setInterval(pollIdentifyAll, 1000);
+  } catch(e) {
+    btn.textContent = 'Identify All';
+    btn.style.opacity = '1';
+    btn.disabled = false;
+    alert('Error: ' + e.message);
+  }
+}
+
+async function stopIdentifyAll() {
+  await fetch('/api/dirigera/identify-all/stop', {method:'POST'});
+  if (identifyAllPoller) { clearInterval(identifyAllPoller); identifyAllPoller = null; }
+  finishIdentifyAll();
+}
+
+async function pollIdentifyAll() {
+  try {
+    const resp = await fetch('/api/dirigera/identify-all/status');
+    const d = await resp.json();
+    const status = document.getElementById('identifyAllStatus');
+    const btn = document.getElementById('identifyAllBtn');
+
+    const ok = d.results.filter(r => r.status === 'ok').length;
+    const fail = d.results.filter(r => r.status !== 'ok').length;
+    status.innerHTML = `${d.done}/${d.total} — <span style="color:var(--excellent)">${ok} matched</span>` +
+      (fail ? `, <span style="color:var(--weak)">${fail} failed</span>` : '') +
+      (d.current ? ` — trying "${d.current}"...` : '');
+
+    if (!d.running && d.done > 0) {
+      clearInterval(identifyAllPoller);
+      identifyAllPoller = null;
+      finishIdentifyAll();
+    }
+  } catch(e) {}
+}
+
+function finishIdentifyAll() {
+  const btn = document.getElementById('identifyAllBtn');
+  if (btn) {
+    btn.textContent = 'Done';
+    btn.style.background = 'var(--excellent)';
+    btn.disabled = true;
+  }
+  fetchData();
+  loadDirigeraDevices();
 }
 
 // --- Button Identification ---
@@ -1777,21 +1903,27 @@ def api_blink_identify():
     import time as _time
 
     try:
-        # Take baseline snapshot
-        baseline = sniffer.snapshot_link_counts()
-
-        # Wait a moment for baseline to settle
+        # Take baseline snapshots (both methods)
         _time.sleep(0.5)
-        baseline = sniffer.snapshot_link_counts()
+        baseline_link = sniffer.snapshot_link_counts()
+        baseline_send = sniffer.snapshot_send_counts()
 
         # Blink the device (toggles on/off/on/off)
         dirigera.blink_device(device_id)
 
-        # Wait for traffic to arrive at sniffer
-        _time.sleep(1.5)
+        # Wait for traffic — blinds are slower
+        wait = 3.0 if device_type == "blinds" else 2.0
+        _time.sleep(wait)
 
-        # Detect which address spiked
-        all_spikes = sniffer.detect_spike(baseline, min_delta=3)
+        # Detect spikes using both methods and merge
+        link_spikes = sniffer.detect_spike(baseline_link, min_delta=2)
+        send_spikes = sniffer.detect_sender_spike(baseline_send, min_delta=2)
+
+        # Merge: sum deltas from both methods per address
+        combined = {}
+        for addr, delta in link_spikes + send_spikes:
+            combined[addr] = combined.get(addr, 0) + delta
+        all_spikes = sorted(combined.items(), key=lambda x: x[1], reverse=True)
 
         # Filter out hub and already-labeled devices from candidates
         labels = load_labels()
@@ -1828,6 +1960,43 @@ def api_blink_identify():
                 "message": f"Identified! '{device_name}' = {best_addr} ({best_delta} extra packets detected)",
             })
         else:
+            # Fallback: check if this is the last unassigned blinkable device
+            # If so, look for any unlabeled address that spiked at all (even weakly)
+            try:
+                hub_devices = dirigera.get_device_summary()
+                assigned_names = {lbl.get("name") for lbl in labels.values() if lbl.get("name")}
+                blinkable_types = {"light", "outlet", "blinds"}
+                unassigned_blinkable = [d for d in hub_devices
+                                        if d.get("type") in blinkable_types
+                                        and d.get("name") not in assigned_names
+                                        and d.get("reachable", True)]
+
+                if len(unassigned_blinkable) <= 1:
+                    # Last device — check for ANY unlabeled spike, even min_delta=1
+                    all_weak = sniffer.detect_spike(baseline_link, min_delta=1)
+                    weak_send = sniffer.detect_sender_spike(baseline_send, min_delta=1)
+                    weak_combined = {}
+                    for addr, delta in all_weak + weak_send:
+                        weak_combined[addr] = weak_combined.get(addr, 0) + delta
+                    weak_filtered = [(a, d) for a, d in sorted(weak_combined.items(), key=lambda x: -x[1])
+                                     if a != "0x0000" and a not in labeled_addrs]
+
+                    if weak_filtered:
+                        best_addr, best_delta = weak_filtered[0]
+                        return jsonify({
+                            "ok": False,
+                            "suggestion": True,
+                            "matched_address": best_addr,
+                            "delta_packets": best_delta,
+                            "device_name": device_name,
+                            "device_type": device_type,
+                            "device_room": device_room,
+                            "error": f"Weak spike on {best_addr} (+{best_delta}). This is the last unassigned device — assign it?",
+                            "all_spikes": [{"address": a, "delta": d} for a, d in weak_filtered[:5]],
+                        })
+            except Exception:
+                pass
+
             return jsonify({
                 "ok": False,
                 "error": "No traffic spike detected. The device may not be reachable or the blink didn't generate enough traffic.",
@@ -1836,6 +2005,125 @@ def api_blink_identify():
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# --- Identify-all state (runs in background thread) ---
+_identify_all_state = {"running": False, "results": [], "current": None, "total": 0, "done": 0}
+_identify_all_lock = threading.Lock()
+
+@app.route("/api/dirigera/identify-all/start", methods=["POST"])
+def api_identify_all_start():
+    """Start identifying all unassigned blinkable devices sequentially."""
+    if not dirigera or not dirigera.is_authenticated():
+        return jsonify({"ok": False, "error": "Not paired with hub"}), 401
+
+    with _identify_all_lock:
+        if _identify_all_state["running"]:
+            return jsonify({"ok": False, "error": "Already running"}), 409
+
+    # Get devices and labels to find unassigned blinkable ones
+    try:
+        devices = dirigera.get_device_summary()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    labels = load_labels()
+    assigned_names = {lbl.get("name") for lbl in labels.values() if lbl.get("name")}
+
+    blinkable_types = {"light", "outlet", "blinds"}
+    candidates = [d for d in devices
+                  if d.get("type") in blinkable_types
+                  and d.get("name") not in assigned_names
+                  and d.get("reachable", True)]
+
+    if not candidates:
+        return jsonify({"ok": True, "total": 0, "message": "No unassigned blinkable devices found"})
+
+    with _identify_all_lock:
+        _identify_all_state["running"] = True
+        _identify_all_state["results"] = []
+        _identify_all_state["current"] = None
+        _identify_all_state["total"] = len(candidates)
+        _identify_all_state["done"] = 0
+
+    def run_identify_all():
+        import time as _time
+        for dev in candidates:
+            with _identify_all_lock:
+                if not _identify_all_state["running"]:
+                    break
+                _identify_all_state["current"] = dev.get("name", "?")
+
+            device_id = dev["id"]
+            device_name = dev.get("name", "")
+            device_type = dev.get("type", "")
+            device_room = dev.get("room", "")
+
+            try:
+                _time.sleep(0.5)
+                baseline_link = sniffer.snapshot_link_counts()
+                baseline_send = sniffer.snapshot_send_counts()
+
+                dirigera.blink_device(device_id)
+                wait = 3.0 if device_type == "blinds" else 2.0
+                _time.sleep(wait)
+
+                link_spikes = sniffer.detect_spike(baseline_link, min_delta=2)
+                send_spikes = sniffer.detect_sender_spike(baseline_send, min_delta=2)
+                combined = {}
+                for addr, delta in link_spikes + send_spikes:
+                    combined[addr] = combined.get(addr, 0) + delta
+                all_spikes = sorted(combined.items(), key=lambda x: x[1], reverse=True)
+
+                labels = load_labels()
+                labeled_addrs = {addr for addr, lbl in labels.items() if lbl.get("name")}
+                filtered = [(a, d) for a, d in all_spikes if a != "0x0000" and a not in labeled_addrs]
+
+                if filtered:
+                    best_addr, best_delta = filtered[0]
+                    if len(filtered) == 1 or best_delta >= filtered[1][1] * 1.2:
+                        labels[best_addr] = {"name": device_name, "type": device_type, "room": device_room}
+                        save_labels(labels)
+                        result = {"name": device_name, "status": "ok", "address": best_addr, "delta": best_delta}
+                    else:
+                        result = {"name": device_name, "status": "ambiguous", "address": None, "delta": best_delta}
+                else:
+                    result = {"name": device_name, "status": "no_spike", "address": None, "delta": 0}
+            except Exception as e:
+                result = {"name": device_name, "status": "error", "address": None, "error": str(e)}
+
+            with _identify_all_lock:
+                _identify_all_state["results"].append(result)
+                _identify_all_state["done"] += 1
+
+            # Pause between devices so traffic settles
+            _time.sleep(1.0)
+
+        with _identify_all_lock:
+            _identify_all_state["running"] = False
+            _identify_all_state["current"] = None
+
+    threading.Thread(target=run_identify_all, daemon=True).start()
+    return jsonify({"ok": True, "total": len(candidates)})
+
+@app.route("/api/dirigera/identify-all/status")
+def api_identify_all_status():
+    """Poll progress of identify-all."""
+    with _identify_all_lock:
+        return jsonify({
+            "running": _identify_all_state["running"],
+            "current": _identify_all_state["current"],
+            "total": _identify_all_state["total"],
+            "done": _identify_all_state["done"],
+            "results": list(_identify_all_state["results"]),
+        })
+
+@app.route("/api/dirigera/identify-all/stop", methods=["POST"])
+def api_identify_all_stop():
+    """Cancel identify-all."""
+    with _identify_all_lock:
+        _identify_all_state["running"] = False
+    return jsonify({"ok": True})
 
 
 def main():

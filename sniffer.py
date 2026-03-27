@@ -290,11 +290,56 @@ class ThreadSniffer:
         self.start_time = None
         self.pcap_file = None
         self.pcap_path = None
+        self.connected = False
+        self._reconnect_count = 0
+
+    def _open_serial(self):
+        """Open serial port and initialize dongle. Returns True on success."""
+        import serial
+        try:
+            if self._serial:
+                try:
+                    self._serial.close()
+                except Exception:
+                    pass
+                self._serial = None
+
+            self._serial = serial.Serial(self.port, exclusive=True, timeout=1)
+
+            # Initialize dongle — drain any buffered data first
+            self._serial.reset_input_buffer()
+            self._send("sleep")
+            time.sleep(0.5)
+            self._serial.reset_input_buffer()
+            self._send("shell echo off")
+            time.sleep(0.3)
+            self._serial.reset_input_buffer()
+            self._send(f"channel {self.channel}")
+            time.sleep(0.3)
+            self._serial.reset_input_buffer()
+            self._send("receive")
+            time.sleep(0.2)
+
+            self.connected = True
+            return True
+        except Exception as e:
+            self.connected = False
+            self._serial = None
+            return False
+
+    def _clear_stale_data(self):
+        """Reset device/link data on reconnect so the dashboard starts fresh."""
+        with self.lock:
+            self.devices.clear()
+            self.links.clear()
+            self.packets.clear()
+            self._ext_to_short.clear()
+            self._short_to_ext.clear()
+            self.total_packets = 0
+            self.start_time = time.time()
 
     def start(self, pcap_path=None):
         """Start capturing in a background thread."""
-        import serial
-        self._serial = serial.Serial(self.port, exclusive=True, timeout=1)
         self._running = True
         self.start_time = time.time()
 
@@ -303,19 +348,8 @@ class ThreadSniffer:
             self.pcap_file = open(pcap_path, "wb")
             self._write_pcap_header()
 
-        # Initialize dongle — drain any buffered data first
-        self._serial.reset_input_buffer()
-        self._send("sleep")
-        time.sleep(0.5)
-        self._serial.reset_input_buffer()
-        self._send("shell echo off")
-        time.sleep(0.3)
-        self._serial.reset_input_buffer()
-        self._send(f"channel {self.channel}")
-        time.sleep(0.3)
-        self._serial.reset_input_buffer()
-        self._send("receive")
-        time.sleep(0.2)
+        if not self._open_serial():
+            print(f"  WARNING: Dongle not found on {self.port} — will retry automatically")
 
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
@@ -323,6 +357,7 @@ class ThreadSniffer:
     def stop(self):
         """Stop capturing."""
         self._running = False
+        self.connected = False
         if self._serial:
             try:
                 self._send("sleep")
@@ -356,6 +391,18 @@ class ThreadSniffer:
         import re as _re
         ansi_re = _re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
         while self._running:
+            # If not connected, try to reconnect
+            if not self.connected or not self._serial:
+                time.sleep(2)
+                if not self._running:
+                    break
+                if self._open_serial():
+                    self._reconnect_count += 1
+                    print(f"  Dongle reconnected on {self.port} (reconnect #{self._reconnect_count})")
+                    buf = ""  # reset buffer on reconnect
+                    self._clear_stale_data()
+                continue
+
             try:
                 data = self._serial.read(4096)
                 if not data:
@@ -378,7 +425,13 @@ class ThreadSniffer:
                         )
             except Exception as e:
                 if self._running:
-                    time.sleep(0.1)
+                    self.connected = False
+                    print(f"  Dongle disconnected ({type(e).__name__}: {e}) — waiting for reconnect...")
+                    try:
+                        self._serial.close()
+                    except Exception:
+                        pass
+                    self._serial = None
 
     def _process_packet(self, hex_data, rssi, lqi, timestamp):
         # Strip FCS (last 2 bytes = 4 hex chars)
@@ -569,6 +622,8 @@ class ThreadSniffer:
                 "total_packets": self.total_packets,
                 "uptime_seconds": round(now - self.start_time, 0) if self.start_time else 0,
                 "device_count": len(self.devices),
+                "connected": self.connected,
+                "reconnect_count": self._reconnect_count,
                 "devices": devices,
                 "links": links,
                 "recent_packets": self.packets[-50:],
