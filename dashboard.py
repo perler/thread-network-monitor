@@ -133,7 +133,27 @@ DASHBOARD_HTML = r"""
     display: flex;
     align-items: center;
     justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
   }
+
+  .card-header:hover { background: var(--surface2); }
+
+  .card-header .chevron {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    transition: transform 0.2s;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .card.collapsed .card-header { border-bottom: none; }
+  .card-header .chevron { transform: rotate(90deg); }
+  .card.collapsed .card-header .chevron { transform: rotate(0deg); }
+  .card.collapsed .card-body { display: none; }
+  .card.hidden-panel { display: none; }
 
   .card-header .badge {
     background: var(--surface2);
@@ -142,6 +162,38 @@ DASHBOARD_HTML = r"""
     font-size: 12px;
     color: var(--text-dim);
   }
+
+  /* Settings Panel */
+  .settings-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .settings-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 24px; min-width: 340px; max-width: 420px;
+  }
+  .settings-box h3 { margin-bottom: 16px; font-size: 16px; }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-row label { font-size: 13px; }
+  .toggle-switch {
+    position: relative; width: 36px; height: 20px; cursor: pointer;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-switch .slider {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border); border-radius: 10px; transition: 0.2s;
+  }
+  .toggle-switch .slider:before {
+    content: ""; position: absolute; height: 14px; width: 14px;
+    left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;
+  }
+  .toggle-switch input:checked + .slider { background: var(--accent); }
+  .toggle-switch input:checked + .slider:before { transform: translateX(16px); }
 
   /* Device Table */
   table {
@@ -219,6 +271,33 @@ DASHBOARD_HTML = r"""
   svg.topo {
     width: 100%;
     height: 400px;
+  }
+
+  /* Subway Map */
+  .subway-map { position: relative; padding: 12px; }
+  .subway-map svg { width: 100%; height: auto; }
+  .subway-line { fill: none; stroke-linecap: round; stroke-linejoin: round; transition: opacity 0.4s, stroke 0.4s; }
+  .subway-station { transition: opacity 0.4s, r 0.15s; cursor: pointer; }
+  .subway-station:hover { filter: brightness(1.1); }
+  .subway-label { font-size: 11px; fill: var(--text); pointer-events: none; transition: opacity 0.4s; font-weight: 500; }
+  .subway-label-bg { fill: var(--surface); opacity: 0.92; rx: 3; ry: 3; pointer-events: none; transition: opacity 0.4s; }
+  .subway-room-bg { rx: 12; ry: 12; transition: opacity 0.4s; }
+  .subway-room-label { font-size: 10px; fill: var(--text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .subway-map svg.dimmed .subway-line,
+  .subway-map svg.dimmed .subway-station,
+  .subway-map svg.dimmed .subway-label,
+  .subway-map svg.dimmed .subway-label-bg { opacity: 0.12; }
+  .subway-map svg.dimmed .subway-line.hl,
+  .subway-map svg.dimmed .subway-station.hl,
+  .subway-map svg.dimmed .subway-label.hl,
+  .subway-map svg.dimmed .subway-label-bg.hl { opacity: 1; }
+  .subway-legend { font-size: 10px; }
+  .subway-legend text { fill: var(--text-dim); }
+  .subway-tooltip {
+    position: absolute; pointer-events: none; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; line-height: 1.5; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 100; display: none; white-space: nowrap;
   }
 
   /* Link Table */
@@ -302,6 +381,7 @@ DASHBOARD_HTML = r"""
     </select>
     <button onclick="changeChannel()" title="Change sniffer channel">Apply</button>
     <button onclick="togglePause()" id="pauseBtn">Pause</button>
+    <button onclick="openSettings()" title="Panel Settings">&#9881;</button>
     <button onclick="showHelp()" title="Help">?</button>
   </div>
 </div>
@@ -364,70 +444,85 @@ DASHBOARD_HTML = r"""
 
 <div class="container">
   <!-- Device Overview -->
-  <div class="card" id="deviceCard">
-    <div class="card-header">
-      Discovered Devices
+  <div class="card" data-panel="devices">
+    <div class="card-header" onclick="toggleCard(this)">
+      <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Discovered Devices</span>
       <span class="badge" id="deviceCount">0</span>
     </div>
-    <div id="deviceTable">
+    <div class="card-body" id="deviceTable">
       <div class="empty"><div class="spinner"></div>Waiting for packets...</div>
     </div>
   </div>
 
-  <div class="grid-2">
+  <!-- Subway Topology Map -->
+  <div class="card" data-panel="topology">
+    <div class="card-header" onclick="toggleCard(this)">
+      <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Network Topology</span>
+      <span class="badge" id="topoNodeCount">0</span>
+    </div>
+    <div class="card-body subway-map" id="subwayMap">
+      <div class="empty"><div class="spinner"></div>Building topology...</div>
+    </div>
+  </div>
+
+  <div class="grid-2" data-panel="analysis">
     <!-- Signal Advice -->
     <div class="card">
-      <div class="card-header">Signal Analysis</div>
-      <div class="advice" id="adviceContent">
+      <div class="card-header" onclick="toggleCard(this)">
+        <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Signal Analysis</span>
+      </div>
+      <div class="card-body advice" id="adviceContent">
         <div class="advice-item info">Collecting data... Signal analysis will appear after devices are discovered.</div>
       </div>
     </div>
 
     <!-- Link Quality -->
     <div class="card">
-      <div class="card-header">
-        Device Links
+      <div class="card-header" onclick="toggleCard(this)">
+        <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Device Links</span>
         <span class="badge" id="linkCount">0</span>
       </div>
-      <div id="linkTable">
+      <div class="card-body" id="linkTable">
         <div class="empty">No links observed yet</div>
       </div>
     </div>
   </div>
 
   <!-- Mesh Path Analysis -->
-  <div class="card">
-    <div class="card-header">
-      Mesh Path Analysis
-      <div style="display:flex;gap:6px">
+  <div class="card" data-panel="mesh">
+    <div class="card-header" onclick="toggleCard(this)">
+      <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Mesh Path Analysis</span>
+      <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
         <button onclick="refreshMeshAnalysis()" id="meshRefreshBtn" style="font-size:11px;padding:3px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">Refresh</button>
         <button onclick="startRouteCheck()" id="routeCheckBtn" style="font-size:11px;padding:3px 10px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer">Route Check</button>
       </div>
     </div>
-    <div id="meshPanel">
+    <div class="card-body" id="meshPanel">
       <div class="advice"><div class="advice-item info">Collecting traffic data... Mesh analysis needs a few minutes of data to show routing paths.</div></div>
     </div>
   </div>
 
-  <div class="grid-2">
+  <div class="grid-2" data-panel="hub">
     <!-- Dirigera Hub -->
     <div class="card">
-      <div class="card-header">Dirigera Hub Integration</div>
-      <div class="advice" id="dirigeraPanel">
+      <div class="card-header" onclick="toggleCard(this)">
+        <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Dirigera Hub Integration</span>
+      </div>
+      <div class="card-body advice" id="dirigeraPanel">
         <div class="advice-item info">Checking hub connection...</div>
       </div>
     </div>
 
     <!-- Toggle Detection -->
     <div class="card">
-      <div class="card-header">
-        Device Identification
-        <div style="display:flex;gap:6px">
+      <div class="card-header" onclick="toggleCard(this)">
+        <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Device Identification</span>
+        <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
           <button onclick="resetToggleIgnored()" id="resetToggleIgnoreBtn" style="font-size:11px;padding:3px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);border-radius:4px;cursor:pointer;display:none">Reset ignored</button>
           <button onclick="startToggleMode()" id="toggleBtn" style="font-size:11px;padding:3px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">Start Toggle Mode</button>
         </div>
       </div>
-      <div id="togglePanel">
+      <div class="card-body" id="togglePanel">
         <div class="advice">
           <div class="advice-item info">Turn off a device, then click "Start Toggle Mode" to see which address disappears. Click the device row to label it.</div>
         </div>
@@ -436,12 +531,12 @@ DASHBOARD_HTML = r"""
   </div>
 
   <!-- Live Packet Feed -->
-  <div class="card">
-    <div class="card-header">
-      Live Packet Feed
+  <div class="card" data-panel="feed">
+    <div class="card-header" onclick="toggleCard(this)">
+      <span><svg class="chevron" viewBox="0 0 16 16"><path d="M4 2l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Live Packet Feed</span>
       <span class="badge" id="feedCount">0</span>
     </div>
-    <div class="feed" id="packetFeed">
+    <div class="card-body feed" id="packetFeed">
       <div class="feed-row" style="font-weight:600;color:var(--text-dim)">
         <span>Time</span><span>RSSI</span><span>LQI</span><span>Source</span><span>Dest</span><span>Type</span><span>Size</span>
       </div>
@@ -537,6 +632,98 @@ function showToast(msg, isError) {
   requestAnimationFrame(() => toast.style.opacity = '1');
   setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
+
+// --- Panel Collapse & Settings ---
+const PANELS = [
+  { id: 'devices', label: 'Discovered Devices' },
+  { id: 'topology', label: 'Network Topology' },
+  { id: 'analysis', label: 'Signal Analysis & Links' },
+  { id: 'mesh', label: 'Mesh Path Analysis' },
+  { id: 'hub', label: 'Dirigera Hub & Identification' },
+  { id: 'feed', label: 'Live Packet Feed' },
+];
+
+function loadPanelState() {
+  try { return JSON.parse(localStorage.getItem('threadmon_panels') || '{}'); } catch(e) { return {}; }
+}
+function savePanelState(state) {
+  localStorage.setItem('threadmon_panels', JSON.stringify(state));
+}
+
+function initPanels() {
+  const state = loadPanelState();
+  PANELS.forEach(p => {
+    const el = document.querySelector(`[data-panel="${p.id}"]`);
+    if (!el) return;
+    if (state[p.id + '_hidden']) el.classList.add('hidden-panel');
+    if (state[p.id + '_collapsed']) el.classList.add('collapsed');
+    // For grid-2 panels, also collapse inner cards
+    if (el.classList.contains('grid-2') && state[p.id + '_collapsed']) {
+      el.querySelectorAll('.card').forEach(c => c.classList.add('collapsed'));
+    }
+  });
+}
+
+function toggleCard(headerEl) {
+  const card = headerEl.closest('.card');
+  if (card) {
+    card.classList.toggle('collapsed');
+    // Save state
+    const panel = card.closest('[data-panel]');
+    if (panel) {
+      const state = loadPanelState();
+      const pid = panel.dataset.panel;
+      // For grid-2 panels, check if all inner cards are collapsed
+      if (panel.classList.contains('grid-2')) {
+        const allCollapsed = [...panel.querySelectorAll('.card')].every(c => c.classList.contains('collapsed'));
+        state[pid + '_collapsed'] = allCollapsed;
+      } else {
+        state[pid + '_collapsed'] = card.classList.contains('collapsed');
+      }
+      savePanelState(state);
+    }
+  }
+}
+
+function openSettings() {
+  const state = loadPanelState();
+  let html = '<div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)closeSettings()"><div class="settings-box">';
+  html += '<h3>Panel Settings</h3>';
+  PANELS.forEach(p => {
+    const hidden = !!state[p.id + '_hidden'];
+    html += `<div class="settings-row">
+      <label>${p.label}</label>
+      <label class="toggle-switch">
+        <input type="checkbox" ${hidden ? '' : 'checked'} onchange="togglePanelVisibility('${p.id}',this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>`;
+  });
+  html += '<div style="margin-top:16px;text-align:right"><button onclick="closeSettings()" style="padding:6px 16px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Done</button></div>';
+  html += '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeSettings() {
+  const el = document.getElementById('settingsOverlay');
+  if (el) el.remove();
+}
+
+function togglePanelVisibility(panelId, visible) {
+  const el = document.querySelector(`[data-panel="${panelId}"]`);
+  if (!el) return;
+  if (visible) {
+    el.classList.remove('hidden-panel');
+  } else {
+    el.classList.add('hidden-panel');
+  }
+  const state = loadPanelState();
+  state[panelId + '_hidden'] = !visible;
+  savePanelState(state);
+}
+
+// Init panels on load
+document.addEventListener('DOMContentLoaded', initPanels);
 
 function formatUptime(s) {
   const h = Math.floor(s / 3600);
@@ -745,6 +932,7 @@ async function fetchData() {
     renderLinks(data.links);
     renderAdvice(data.devices, data.links);
     renderFeed(data.recent_packets);
+    renderSubwayMap(data.devices, data.links);
     updateTogglePanel(data.devices);
   } catch (e) {
     document.getElementById('statusDot').style.background = 'var(--very-weak)';
@@ -1416,6 +1604,379 @@ async function buttonIdentify(name, type, room, btnEl) {
     btnEl.disabled = false;
     alert('Error: ' + e.message);
   }
+}
+
+// --- Subway Topology Map ---
+let subwayCache = { addrs: null, positions: null };
+
+function buildSubwayTree(devices, links) {
+  // Filter: only devices with enough traffic or a label
+  const devMap = {};
+  devices.forEach(d => {
+    const addr = d.short_address || d.address;
+    if (d.frame_count >= 3 || d.label) devMap[addr] = d;
+  });
+
+  // Build link weight map
+  const linkWeight = {};
+  links.forEach(l => {
+    const key = l.src + '>' + l.dst;
+    linkWeight[key] = (linkWeight[key] || 0) + l.packet_count;
+  });
+
+  // Find parent for each device (peer with most traffic, closer to hub)
+  const hub = '0x0000';
+  const parent = {};
+  const children = {};
+  Object.keys(devMap).forEach(a => { children[a] = []; });
+
+  // BFS from hub to assign depth
+  const depth = { [hub]: 0 };
+  const queue = [hub];
+  const visited = new Set([hub]);
+
+  // Adjacency from links
+  const adj = {};
+  links.forEach(l => {
+    if (!devMap[l.src] || !devMap[l.dst]) return;
+    if (!adj[l.src]) adj[l.src] = [];
+    if (!adj[l.dst]) adj[l.dst] = [];
+    adj[l.src].push({ peer: l.dst, weight: l.packet_count, rssi: l.avg_rssi });
+    adj[l.dst].push({ peer: l.src, weight: l.packet_count, rssi: l.avg_rssi });
+  });
+
+  while (queue.length) {
+    const cur = queue.shift();
+    (adj[cur] || []).forEach(({ peer }) => {
+      if (!visited.has(peer)) {
+        visited.add(peer);
+        depth[peer] = depth[cur] + 1;
+        parent[peer] = cur;
+        if (children[cur]) children[cur].push(peer);
+        queue.push(peer);
+      }
+    });
+  }
+
+  // Devices not reached by BFS — attach to hub
+  Object.keys(devMap).forEach(a => {
+    if (a !== hub && !parent[a]) {
+      parent[a] = hub;
+      if (children[hub]) children[hub].push(a);
+      depth[a] = 1;
+    }
+  });
+
+  // Group by room
+  const rooms = {};
+  Object.entries(devMap).forEach(([addr, d]) => {
+    if (addr === hub) return;
+    const room = d.label_room || '';
+    if (!rooms[room]) rooms[room] = [];
+    rooms[room].push(addr);
+  });
+
+  // Get link RSSI for drawing
+  const linkRssi = {};
+  links.forEach(l => {
+    const k1 = l.src + '>' + l.dst;
+    const k2 = l.dst + '>' + l.src;
+    linkRssi[k1] = l.avg_rssi;
+    linkRssi[k2] = l.avg_rssi;
+  });
+
+  return { devMap, hub, parent, children, depth, rooms, linkRssi };
+}
+
+function computeSubwayLayout(tree, width, height) {
+  const { devMap, hub, parent, children, rooms } = tree;
+  const cx = width / 2, cy = height / 2;
+  const pos = {};
+  const cell = 65;
+  const snap = v => Math.round(v / cell) * cell;
+
+  pos[hub] = { x: cx, y: cy };
+
+  // Sort rooms by size, assign angular sectors
+  const roomNames = Object.keys(rooms).sort((a, b) => rooms[b].length - rooms[a].length);
+  if (roomNames.length === 0) return pos;
+
+  const sectorSize = (2 * Math.PI) / Math.max(roomNames.length, 1);
+  const innerR = Math.min(width, height) * 0.25;
+  const outerR = Math.min(width, height) * 0.42;
+
+  const occupied = new Set();
+  occupied.add(snap(cx) + ',' + snap(cy));
+
+  function findFreeSpot(idealX, idealY) {
+    let sx = snap(idealX), sy = snap(idealY);
+    const key = sx + ',' + sy;
+    if (!occupied.has(key)) { occupied.add(key); return { x: sx, y: sy }; }
+    // Spiral outward to find free cell
+    for (let r = 1; r <= 4; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const nx = sx + dx * cell, ny = sy + dy * cell;
+          const nk = nx + ',' + ny;
+          if (!occupied.has(nk)) { occupied.add(nk); return { x: nx, y: ny }; }
+        }
+      }
+    }
+    return { x: sx + cell, y: sy };
+  }
+
+  roomNames.forEach((roomName, ri) => {
+    const angle0 = ri * sectorSize - Math.PI / 2;
+    const addrs = rooms[roomName];
+
+    // Separate routers and end devices
+    const routers = addrs.filter(a => {
+      const d = devMap[a];
+      return d && (d.role === 'Router' || d.role === 'Router (likely)' || d.role === 'Router/End Device');
+    });
+    const ends = addrs.filter(a => !routers.includes(a));
+
+    // Place routers on inner ring
+    routers.forEach((addr, i) => {
+      const a = angle0 + (i + 0.5) * sectorSize / Math.max(routers.length, 1);
+      pos[addr] = findFreeSpot(cx + Math.cos(a) * innerR, cy + Math.sin(a) * innerR);
+    });
+
+    // Place end devices on outer ring, near their parent
+    ends.forEach((addr, i) => {
+      const p = parent[addr];
+      const pPos = pos[p] || { x: cx, y: cy };
+      const a = angle0 + (i + 0.5) * sectorSize / Math.max(ends.length, 1);
+      const dx = Math.cos(a) * outerR;
+      const dy = Math.sin(a) * outerR;
+      pos[addr] = findFreeSpot(cx + dx, cy + dy);
+    });
+  });
+
+  return pos;
+}
+
+function subwayPath(x1, y1, x2, y2) {
+  const R = 12;
+  const dx = x2 - x1, dy = y2 - y1;
+  if (Math.abs(dx) < 2) return `M${x1},${y1}V${y2}`;
+  if (Math.abs(dy) < 2) return `M${x1},${y1}H${x2}`;
+  // L-shape with rounded corner
+  const sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+  const mx = x2 - sx * R;
+  const my = y1 + sy * R;
+  return `M${x1},${y1}H${mx}Q${x2},${y1},${x2},${my}V${y2}`;
+}
+
+function signalColor(quality) {
+  const m = { excellent: 'var(--excellent)', good: 'var(--good)', fair: 'var(--fair)', weak: 'var(--weak)', very_weak: 'var(--very-weak)' };
+  return m[quality] || 'var(--text-dim)';
+}
+
+function rssiToQuality(rssi) {
+  if (rssi >= -60) return 'excellent';
+  if (rssi >= -70) return 'good';
+  if (rssi >= -80) return 'fair';
+  if (rssi >= -90) return 'weak';
+  return 'very_weak';
+}
+
+function renderSubwayMap(devices, links) {
+  const container = document.getElementById('subwayMap');
+  if (!container || !devices.length) return;
+
+  document.getElementById('topoNodeCount').textContent = devices.filter(d => d.frame_count >= 3 || d.label).length;
+
+  const tree = buildSubwayTree(devices, links);
+  const { devMap, hub, parent, linkRssi, rooms } = tree;
+
+  // Check if we need a full relayout
+  const currentAddrs = Object.keys(devMap).sort().join(',');
+  let positions;
+  if (subwayCache.addrs === currentAddrs && subwayCache.positions) {
+    positions = subwayCache.positions;
+  } else {
+    const W = 900, H = 600;
+    positions = computeSubwayLayout(tree, W, H);
+    subwayCache = { addrs: currentAddrs, positions };
+  }
+
+  // Compute SVG viewBox from positions
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  Object.values(positions).forEach(p => {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  });
+  const pad = 80;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const vw = maxX - minX, vh = maxY - minY;
+
+  let svg = `<svg viewBox="${minX} ${minY} ${vw} ${vh}" style="min-height:350px;max-height:550px">`;
+
+  // Layer 1: Room backgrounds
+  const roomColors = ['rgba(79,70,229,0.06)', 'rgba(22,163,74,0.06)', 'rgba(202,138,4,0.06)', 'rgba(234,88,12,0.06)', 'rgba(220,38,38,0.06)'];
+  const roomBorders = ['rgba(79,70,229,0.25)', 'rgba(22,163,74,0.25)', 'rgba(202,138,4,0.25)', 'rgba(234,88,12,0.25)', 'rgba(220,38,38,0.25)'];
+  let ri2 = 0;
+  Object.entries(rooms).forEach(([roomName, addrs]) => {
+    if (!roomName) return;
+    let rx1 = Infinity, ry1 = Infinity, rx2 = -Infinity, ry2 = -Infinity;
+    addrs.forEach(a => {
+      const p = positions[a];
+      if (!p) return;
+      rx1 = Math.min(rx1, p.x); ry1 = Math.min(ry1, p.y);
+      rx2 = Math.max(rx2, p.x); ry2 = Math.max(ry2, p.y);
+    });
+    if (rx1 === Infinity) return;
+    const rpad = 35;
+    const ci = ri2 % roomColors.length;
+    svg += `<rect class="subway-room-bg" x="${rx1-rpad}" y="${ry1-rpad-14}" width="${rx2-rx1+rpad*2}" height="${ry2-ry1+rpad*2+14}" fill="${roomColors[ci]}" stroke="${roomBorders[ci]}" stroke-width="1.5" stroke-dasharray="6,4"/>`;
+    svg += `<text class="subway-room-label" x="${rx1-rpad+8}" y="${ry1-rpad-2}">${roomName}</text>`;
+    ri2++;
+  });
+
+  // Layer 2: Lines (parent links)
+  Object.entries(parent).forEach(([addr, par]) => {
+    const p1 = positions[par], p2 = positions[addr];
+    if (!p1 || !p2) return;
+    const d = devMap[addr];
+    const isRouter = d && (d.role === 'Router' || d.role === 'Router (likely)' || d.role === 'Router/End Device');
+    const sw = isRouter ? 7 : 4;
+    const lk = par + '>' + addr;
+    const rssi = linkRssi[lk] || linkRssi[addr + '>' + par] || (d ? d.avg_rssi : -80);
+    const color = signalColor(rssiToQuality(rssi));
+    const path = subwayPath(p1.x, p1.y, p2.x, p2.y);
+    svg += `<path class="subway-line" data-src="${par}" data-dst="${addr}" d="${path}" stroke="${color}" stroke-width="${sw}" opacity="0.8"/>`;
+  });
+
+  // Layer 3: Stations
+  Object.entries(devMap).forEach(([addr, d]) => {
+    const p = positions[addr];
+    if (!p) return;
+    const isHub = addr === hub;
+    const isRouter = d.role === 'Router' || d.role === 'Router (likely)' || d.role === 'Router/End Device' || d.role === 'Border Router';
+    const color = signalColor(d.signal_quality);
+    const r = isHub ? 14 : isRouter ? 10 : 6;
+    const fill = isHub ? 'var(--accent)' : isRouter ? 'var(--surface)' : color;
+    const stroke = isHub ? 'var(--surface)' : isRouter ? color : 'var(--surface)';
+    const strokeW = isHub ? 4 : isRouter ? 3.5 : 1.5;
+
+    if (isHub) {
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="${r+5}" fill="none" stroke="var(--accent)" stroke-width="2" opacity="0.3"><animate attributeName="r" values="${r+5};${r+10};${r+5}" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.3;0.08;0.3" dur="3s" repeatCount="indefinite"/></circle>`;
+    }
+    svg += `<circle class="subway-station" data-addr="${addr}" cx="${p.x}" cy="${p.y}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}"/>`;
+  });
+
+  // Layer 4: Labels with white background pills (like London Tube map)
+  // First pass: collect label positions and dimensions, then render bg + text
+  const labelData = [];
+  Object.entries(devMap).forEach(([addr, d]) => {
+    const p = positions[addr];
+    if (!p) return;
+    const name = d.label || (addr === hub ? 'Hub' : '');
+    if (!name) return;
+
+    // Choose label direction to avoid center (push labels outward)
+    const dx = p.x - (minX + vw / 2);
+    const dy = p.y - (minY + vh / 2);
+    // Prefer horizontal offset; use vertical if node is near horizontal center
+    let lx, ly, anchor;
+    const isHub2 = addr === hub;
+    const offset = isHub2 ? 22 : 18;
+    if (Math.abs(dx) > Math.abs(dy) * 0.5) {
+      // Place left or right
+      const right = dx >= 0;
+      lx = right ? p.x + offset : p.x - offset;
+      ly = p.y + 4;
+      anchor = right ? 'start' : 'end';
+    } else {
+      // Place above or below
+      const below = dy >= 0;
+      lx = p.x;
+      ly = below ? p.y + offset + 4 : p.y - offset + 4;
+      anchor = 'middle';
+    }
+
+    // Estimate text width (~6.5px per character at 11px font)
+    const tw = name.length * 6.5;
+    const th = 14;
+    const pad = 4;
+    let bgX;
+    if (anchor === 'start') bgX = lx - pad;
+    else if (anchor === 'end') bgX = lx - tw - pad;
+    else bgX = lx - tw / 2 - pad;
+    const bgY = ly - th + 1;
+
+    labelData.push({ addr, name, lx, ly, anchor, bgX, bgY, tw: tw + pad * 2, th: th + pad });
+  });
+
+  // Render background rects first, then text on top
+  labelData.forEach(l => {
+    svg += `<rect class="subway-label-bg" data-addr="${l.addr}" x="${l.bgX}" y="${l.bgY}" width="${l.tw}" height="${l.th}"/>`;
+  });
+  labelData.forEach(l => {
+    svg += `<text class="subway-label" data-addr="${l.addr}" x="${l.lx}" y="${l.ly}" text-anchor="${l.anchor}">${l.name}</text>`;
+  });
+
+  // Layer 5: Legend
+  const lx = maxX - 20, ly = minY + 20;
+  const legendItems = [
+    ['Excellent', 'var(--excellent)'], ['Good', 'var(--good)'], ['Fair', 'var(--fair)'],
+    ['Weak', 'var(--weak)'], ['Very Weak', 'var(--very-weak)']
+  ];
+  svg += `<g class="subway-legend" transform="translate(${lx},${ly})">`;
+  legendItems.forEach(([label, color], i) => {
+    svg += `<line x1="-50" y1="${i*16}" x2="-30" y2="${i*16}" stroke="${color}" stroke-width="4" stroke-linecap="round"/>`;
+    svg += `<text x="-24" y="${i*16+3.5}" text-anchor="start" font-size="9">${label}</text>`;
+  });
+  svg += `</g>`;
+
+  svg += `</svg><div class="subway-tooltip" id="subwayTooltip"></div>`;
+  container.innerHTML = svg;
+
+  // Interaction
+  const svgEl = container.querySelector('svg');
+  const tooltip = document.getElementById('subwayTooltip');
+
+  svgEl.addEventListener('mouseover', e => {
+    const station = e.target.closest('.subway-station');
+    if (!station) return;
+    const addr = station.dataset.addr;
+    svgEl.classList.add('dimmed');
+    // Highlight this station and connected lines/labels
+    station.classList.add('hl');
+    svgEl.querySelectorAll(`.subway-label[data-addr="${addr}"],.subway-label-bg[data-addr="${addr}"]`).forEach(el => el.classList.add('hl'));
+    svgEl.querySelectorAll(`.subway-line[data-src="${addr}"],.subway-line[data-dst="${addr}"]`).forEach(el => {
+      el.classList.add('hl');
+      const other = el.dataset.src === addr ? el.dataset.dst : el.dataset.src;
+      svgEl.querySelectorAll(`.subway-station[data-addr="${other}"],.subway-label[data-addr="${other}"],.subway-label-bg[data-addr="${other}"]`).forEach(o => o.classList.add('hl'));
+    });
+    // Tooltip
+    const d = devMap[addr];
+    if (d) {
+      tooltip.innerHTML = `<strong>${d.label || addr}</strong><br>` +
+        `<span style="color:var(--text-dim)">${addr} &middot; ${d.role}</span><br>` +
+        `RSSI: <strong style="color:${signalColor(d.signal_quality)}">${d.avg_rssi} dBm</strong>` +
+        (d.label_room ? `<br>Room: ${d.label_room}` : '');
+      tooltip.style.display = 'block';
+    }
+  });
+
+  svgEl.addEventListener('mousemove', e => {
+    if (tooltip.style.display === 'block') {
+      const rect = container.getBoundingClientRect();
+      tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+    }
+  });
+
+  svgEl.addEventListener('mouseout', e => {
+    const station = e.target.closest('.subway-station');
+    if (!station) return;
+    svgEl.classList.remove('dimmed');
+    svgEl.querySelectorAll('.hl').forEach(el => el.classList.remove('hl'));
+    tooltip.style.display = 'none';
+  });
 }
 
 // --- Mesh Path Analysis ---

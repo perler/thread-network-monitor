@@ -2,19 +2,28 @@
 
 A real-time web dashboard for monitoring Thread/Matter mesh networks (like IKEA Dirigera) using an nRF52840 USB sniffer dongle. Visualizes signal strength, link quality, and device relationships to help optimize device placement.
 
-## Screenshot
+## Screenshots
 
 ![Thread Network Monitor Dashboard](screenshots/dashboard.gif)
 
+### Subway-Style Topology Map
+
+![Network Topology Map](screenshots/topology-map-card.png)
+
+The topology map visualizes your mesh network like a subway map — thick colored lines show signal quality between devices, room groupings are shown as background zones, and the hub sits at the center. Hover any device to highlight its connections.
+
 ## Features
 
+- **Subway topology map** — Visual mesh map with room groupings, signal-quality colored lines, and interactive hover
 - **Live signal monitoring** — RSSI and LQI per device, color-coded signal quality
-- **Device identification** — Toggle mode to find which address belongs to which device
+- **Device identification** — Toggle mode, blink-identify, and batch "Identify All" to map Thread addresses to devices
 - **IKEA Dirigera integration** — Pair with the hub to import device names, types, and rooms
 - **Manual labeling** — Click any device to assign a name, type, and room
 - **Sortable device table** — Sort by address, name, signal strength, LQI, packets, or last seen
 - **Signal analysis** — Automatic recommendations for weak links and repeater placement
 - **Link tracking** — See which devices communicate and at what signal quality
+- **Collapsible panels** — Click any panel header to collapse; gear icon to show/hide panels
+- **Dongle auto-reconnect** — Automatically recovers when the USB dongle is removed and re-plugged
 - **Channel scanning** — Scan all 802.15.4 channels (11-26) to find your network
 - **Wireshark integration** — Extcap plugin for deep packet analysis, auto-saved pcap files
 - **Live packet feed** — Real-time view of all captured frames
